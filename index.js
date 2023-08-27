@@ -1,141 +1,139 @@
-const express = require('express')
-const app = express()
-const cors = require('cors')
-require('dotenv').config()
+const express = require('express');
+const app = express();
+const cors = require('cors');
 const mongoose = require('mongoose');
+require('dotenv').config();
+const { Schema } = mongoose;
 
-mongoose.connect(process.env.MONGO_URI)
-  .then(() => {
-    console.log('Connected to MongoDB');
-  })
-  .catch(error => {
-    console.error('Connection error:', error);
-  });
+mongoose.connect(process.env.MONGO_URI, {
+  useNewUrlParser: true,
+  useUnifiedTopology: true,
+});
 
-const userSchema = mongoose.Schema({
-  username:{
-    type: String,
-    unique: true
-  }
-},
-{versionKey:false}
-)
+// User schema and model
+const UserSchema = new Schema({
+  username: { type: String, required: true },
+});
+const User = mongoose.model('User', UserSchema);
 
-const User = mongoose.model("User",userSchema)
-
-const exerciseSchama= mongoose.Schema({
-  username:String,
-  description:String,
-  duration:Number,
+// Exercise schema and model
+const ExerciseSchema = new Schema({
+  user_id: { type: String, required: true },
+  description: String,
+  duration: Number,
   date: Date,
-  UserId: String
-})
+});
+const Exercise = mongoose.model('Exercise', ExerciseSchema);
 
-const Exercise = mongoose.model("Exercise",exerciseSchama)
-
-app.use(cors())
-app.use(express.urlencoded({extended:true}))
-app.use(express.static('public'))
+app.use(cors());
+app.use(express.static('public'));
+app.use(express.urlencoded({ extended: true }));
+app.use(express.json());
 app.get('/', (req, res) => {
   res.sendFile(__dirname + '/views/index.html')
 });
-//mongodb+srv://manasa:asdfasdfasdf@cluster0.ui5hrmq.mongodb.net/?retryWrites=true&w=majority
-app.get("/api/users", async(req,res)=>{
-  const users = await User.find()
-
-res.send(users)})
-app.post("/api/users",async(req,res)=>{
-  const username = req.body.username;
-  const foundUser = await User.findOne({username})
-  if(foundUser){
-          res.json(foundUser);
-        }
-  const user = await User.create({
-    username,
-  })
-  res.json(user);
-})
-
-
-
-app.get("/api/user/:_id/logs", async (req,res)=>{
-  const {from,to,limit} = req.query;
-  const userId = req.params._id;
-  res.send(userId)
-const foundUser = await User.findById(userId)
-if(!foundUser){
-  res.json({
-   message: "No user exists for that id "
-  })
-}
-
-let filter = {userId};
-if(from){
-  dateFilter['$gte']=new Date(from)
-}
-if(to){
-  dateFilter['$lte'] = new Date(to)
-}
-
-if(from || to){
-  filter.dateFilter = dateFilter
-}
-if(!limit){
-  limit = 100;
-}
-
-let exercises = await Exercise.find(dateFilter)
-exercises = exercises.map((exercise)=>{
-  return {
-    description: exercise.description,
-    duration: exercise.duration,
-    date: exercise.date
+// Create a new user
+app.post('/api/users', async (req, res) => {
+  try {
+    const { username } = req.body;
+    const newUser = new User({ username });
+    const savedUser = await newUser.save();
+    res.json({ username: savedUser.username, _id: savedUser._id });
+  } catch (error) {
+    res.status(500).json({ error: 'Error creating user' });
   }
 });
 
-res.json({
-  username:foundUser.username,
-  count:exercises.length,
-  _id:userId,
-  log: exercises
-})
-})
+// Get a list of all users
+app.get('/api/users', async (req, res) => {
+  try {
+    const users = await User.find({}, '_id username');
+    res.json(users);
+  } catch (error) {
+    res.status(500).json({ error: 'Error fetching users' });
+  }
+});
 
-app.post("/api/users/:_id/exercises",async(req,res)=>{
- 
-  let {description, duration,date } =req.body; 
-  const userId = req.body[":_id"];
-  const foundUser = await User.findById(userId)
- 
- 
-  if(!foundUser){
-   res.json({
-    message: "No user exists for that id "
-   })
- }
- 
- if(!date){
-  date= new Date();
- }else{
-  date =new Date(date);
- }
- await Exercise.create({
-  username: foundUser.username,
-  description,
-  duration,
-  date,
-  userId
- })
- res.send({
-   username: foundUser.username,
-   description,
-   duration,
-   date: date.toDateString(),
-   _id:userId,
- })
- })
+// Add an exercise for a user
+app.post('/api/users/:_id/exercises', async (req, res) => {
+  try {
+    const userId = req.params._id;
+    const { description, duration, date } = req.body;
+
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    const exercise = new Exercise({
+      user_id: userId,
+      description,
+      duration,
+      date: date ? new Date(date) : new Date(),
+    });
+
+    const savedExercise = await exercise.save();
+
+    res.json({
+      _id: user._id,
+      username: user.username,
+      description: savedExercise.description,
+      duration: savedExercise.duration,
+      date: savedExercise.date.toDateString(),
+    });
+  } catch (error) {
+    res.status(500).json({ error: 'Error adding exercise' });
+  }
+});
+
+// Get the exercise log for a user
+// Get the exercise log for a user
+app.get('/api/users/:_id/logs', async (req, res) => {
+  try {
+    const userId = req.params._id;
+    const user = await User.findById(userId);
+
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    const { from, to, limit } = req.query;
+    const filter = { user_id: userId };
+
+    if (from || to) {
+      filter.date = {};
+      if (from) {
+        filter.date.$gte = new Date(from);
+      }
+      if (to) {
+        filter.date.$lte = new Date(to);
+      }
+    }
+
+    const exercises = await Exercise.find(filter)
+      .limit(parseInt(limit) || 0)
+      .select('description duration date -_id');
+
+    const log = exercises.map((exercise) => ({
+      description: exercise.description,
+      duration: exercise.duration,
+      date: exercise.date.toDateString(), // Convert date to string using toDateString()
+    }));
+
+    res.json({
+      _id: user._id,
+      username: user.username,
+      count: exercises.length,
+      log: log, // Use the updated log array
+    });
+  } catch (error) {
+    res.status(500).json({ error: 'Error fetching exercise log' });
+  }
+});
 
 
-const listener = app.listen(process.env.PORT || 3000, () => {
-  console.log('Your app is listening on port ' + listener.address().port)
-})
+mongoose.connection.on('open', () => {
+  const listener = app.listen(process.env.PORT || 3000, () => {
+    console.log('Your app is listening on port ' + listener.address().port);
+  });
+});
